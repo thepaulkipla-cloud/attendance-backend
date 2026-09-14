@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { distanceMeters } = require('../geo');
 
 const router = express.Router();
 
@@ -11,6 +12,18 @@ async function resolveSite(qr_token) {
     [qr_token]
   );
   return result.rows[0] || null;
+}
+
+function checkGeofence(site, lat, lng) {
+  if (site.latitude == null || site.longitude == null) return { ok: true };
+  if (lat == null || lng == null) {
+    return { ok: false, error: `Location is required to sign in at ${site.name}. Please enable location and try again.` };
+  }
+  const distance = distanceMeters(site.latitude, site.longitude, lat, lng);
+  if (distance > site.radius_meters) {
+    return { ok: false, error: `You appear to be ${Math.round(distance)}m from ${site.name}, outside the allowed ${site.radius_meters}m radius.` };
+  }
+  return { ok: true };
 }
 
 // Same plausibility rule as employee sign-in/out — see attendance.js.
@@ -31,13 +44,17 @@ function resolveTimestamp(occurred_at) {
 // Any logged-in employee can register a guest — this mirrors the paper
 // register, where any staff member could fill in the Guest/Visitor rows.
 // `occurred_at` (optional) lets an offline-queued entry keep its real
-// scan time instead of the sync time.
+// scan time instead of the sync time. `lat`/`lng` (optional) are checked
+// against the site's geofence, if one is set.
 router.post('/sign-in', requireAuth, async (req, res) => {
-  const { guest_name, qr_token, occurred_at } = req.body;
+  const { guest_name, qr_token, occurred_at, lat, lng } = req.body;
   if (!guest_name) return res.status(400).json({ error: 'guest_name is required' });
 
   const site = await resolveSite(qr_token);
   if (!site) return res.status(400).json({ error: 'Invalid or inactive site QR code' });
+
+  const geofence = checkGeofence(site, lat, lng);
+  if (!geofence.ok) return res.status(403).json({ error: geofence.error });
 
   const ts = resolveTimestamp(occurred_at);
   if (!ts.valid) return res.status(400).json({ error: 'occurred_at is not a plausible timestamp' });
@@ -67,11 +84,14 @@ router.post('/sign-in', requireAuth, async (req, res) => {
 
 // Signs out the guest's most recent still-open visit for that work date.
 router.post('/sign-out', requireAuth, async (req, res) => {
-  const { guest_name, qr_token, occurred_at } = req.body;
+  const { guest_name, qr_token, occurred_at, lat, lng } = req.body;
   if (!guest_name) return res.status(400).json({ error: 'guest_name is required' });
 
   const site = await resolveSite(qr_token);
   if (!site) return res.status(400).json({ error: 'Invalid or inactive site QR code' });
+
+  const geofence = checkGeofence(site, lat, lng);
+  if (!geofence.ok) return res.status(403).json({ error: geofence.error });
 
   const ts = resolveTimestamp(occurred_at);
   if (!ts.valid) return res.status(400).json({ error: 'occurred_at is not a plausible timestamp' });

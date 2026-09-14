@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { distanceMeters } = require('../geo');
 
 const router = express.Router();
 
@@ -36,6 +37,21 @@ function resolveTimestamp(occurred_at) {
   return { iso: parsed.toISOString(), valid: true };
 }
 
+// Checks the scanner's reported location against the site's geofence, if
+// that site has coordinates set. Sites without coordinates skip this
+// entirely — QR-only verification, as before this feature existed.
+function checkGeofence(site, lat, lng) {
+  if (site.latitude == null || site.longitude == null) return { ok: true };
+  if (lat == null || lng == null) {
+    return { ok: false, error: `Location is required to sign in at ${site.name}. Please enable location and try again.` };
+  }
+  const distance = distanceMeters(site.latitude, site.longitude, lat, lng);
+  if (distance > site.radius_meters) {
+    return { ok: false, error: `You appear to be ${Math.round(distance)}m from ${site.name}, outside the allowed ${site.radius_meters}m radius.` };
+  }
+  return { ok: true };
+}
+
 // Sign in. Requires the token scanned from the site's QR code. Fails if
 // already signed in for that work date (prevents the silent double-entries
 // the paper form allowed). `occurred_at` (optional) lets an offline-queued
@@ -46,6 +62,9 @@ router.post('/sign-in', requireAuth, async (req, res) => {
 
   const site = await resolveSite(qr_token);
   if (!site) return res.status(400).json({ error: 'Invalid or inactive site QR code' });
+
+  const geofence = checkGeofence(site, lat, lng);
+  if (!geofence.ok) return res.status(403).json({ error: geofence.error });
 
   const ts = resolveTimestamp(occurred_at);
   if (!ts.valid) return res.status(400).json({ error: 'occurred_at is not a plausible timestamp' });
@@ -92,6 +111,9 @@ router.post('/sign-out', requireAuth, async (req, res) => {
 
   const site = await resolveSite(qr_token);
   if (!site) return res.status(400).json({ error: 'Invalid or inactive site QR code' });
+
+  const geofence = checkGeofence(site, lat, lng);
+  if (!geofence.ok) return res.status(403).json({ error: geofence.error });
 
   const ts = resolveTimestamp(occurred_at);
   if (!ts.valid) return res.status(400).json({ error: 'occurred_at is not a plausible timestamp' });

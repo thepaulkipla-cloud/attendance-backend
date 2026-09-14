@@ -133,4 +133,37 @@ router.get('/guests', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
+// List all employees for the admin dashboard's employee management panel.
+router.get('/employees', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, full_name, phone_number, role, active FROM employees ORDER BY full_name'
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch employees' });
+  }
+});
+
+// Deactivate/reactivate an employee, or change their role — e.g. when
+// someone leaves the company, without deleting their historical records.
+router.patch('/employees/:id', requireAuth, requireAdmin, async (req, res) => {
+  const { active, role } = req.body;
+  try {
+    const result = await pool.query(
+      `UPDATE employees SET
+         active = COALESCE($1, active),
+         role = COALESCE($2, role)
+       WHERE id = $3 RETURNING id, full_name, phone_number, role, active`,
+      [active ?? null, role ?? null, req.params.id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Employee not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update employee' });
+  }
+});
+
 module.exports = router;

@@ -26,3 +26,10 @@ CREATE TABLE IF NOT EXISTS weekly_signoffs (
   verified_by      INTEGER REFERENCES employees(id),
   verified_at      TIMESTAMPTZ
 );
+
+-- Geofencing: each site can optionally have real coordinates + an
+-- allowed radius. Sites without coordinates set skip the geofence check
+-- entirely (QR-only verification, as before).
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS radius_meters INTEGER DEFAULT 100;
